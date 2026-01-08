@@ -1,0 +1,132 @@
+from ultralytics import YOLO
+import torch
+from ultralytics.nn.modules import Bottleneck, Conv, C2f, SPPF, Detect
+from copy import deepcopy
+
+from ultralytics.nn.modules.CALayer import CALayer
+from ultralytics.nn.modules.PALayer import PALayer
+
+# 新增模块处理函数
+def process_ca_pa(m):
+    """处理CALayer和PALayer中的卷积层"""
+    if isinstance(m, CALayer):
+        return [m.ca[0], m.ca[2]]  # 返回CALayer中的两个卷积层
+    elif isinstance(m, PALayer):
+        return [m.pa[0], m.pa[2]]  # 返回PALayer中的两个卷积层
+    return []
+
+# 计算模型参数量
+def count_parameters(model):
+    """计算模型的总参数量"""
+    return sum(p.numel() for p in model.parameters())
+
+# Load model
+yolo = YOLO("C:/Users/YLu/Desktop/ultralytics/runs/detect/teacher_model4/weights/last.pt")
+res_dir = "C:/Users/YLu/Desktop/ultralytics/runs/detect/prune/weights/pruned_model-All.pt"
+factor = 0.75
+
+# 获取原始模型参数量
+original_params = count_parameters(yolo.model)
+print(f"原始模型参数量: {original_params:,}")
+
+# 获取BN层权重
+ws, bs = [], []
+for m in yolo.model.modules():
+    if isinstance(m, torch.nn.BatchNorm2d):
+        ws.append(m.weight.abs().detach())
+        bs.append(m.bias.abs().detach())
+
+# 计算全局阈值
+ws = torch.cat(ws)
+threshold = torch.sort(ws, descending=True)[0][int(len(ws) * factor)]
+
+def prune_conv(conv1: Conv, conv2: Conv):
+    """改进的卷积剪枝函数，支持膨胀卷积"""
+    dilation = conv1.conv.dilation if hasattr(conv1.conv, 'dilation') else 1
+
+    gamma = conv1.bn.weight.data
+    keep_idxs = torch.where(gamma.abs() >= threshold)[0]
+
+    if len(keep_idxs) < 8:
+        keep_idxs = torch.argsort(gamma.abs(), descending=True)[:8]
+
+    conv1.bn = prune_bn(conv1.bn, keep_idxs)
+    conv1.conv = prune_conv2d(conv1.conv, keep_idxs, dim=0)
+
+    if conv2 is not None:
+        if isinstance(conv2, Conv):
+            conv2.conv = prune_conv2d(
+                conv2.conv, keep_idxs, dim=1,
+                dilation=dilation
+            )
+
+def prune_bn(bn, idxs):
+    """修剪BN层"""
+    bn.weight.data = bn.weight.data[idxs]
+    bn.bias.data = bn.bias.data[idxs]
+    bn.running_mean = bn.running_mean[idxs]
+    bn.running_var = bn.running_var[idxs]
+    bn.num_features = len(idxs)
+    return bn
+
+def prune_conv2d(conv, idxs, dim=0, **kwargs):
+    """支持膨胀卷积的剪枝"""
+    new_conv = torch.nn.Conv2d(
+        in_channels=conv.in_channels if dim == 0 else len(idxs),
+        out_channels=conv.out_channels if dim == 1 else len(idxs),
+        kernel_size=conv.kernel_size,
+        stride=conv.stride,
+        padding=conv.padding,
+        dilation=conv.dilation,  # 保留膨胀参数
+        groups=conv.groups,
+        bias=conv.bias is not None
+    )
+
+    # 裁剪权重
+    if dim == 0:
+        new_conv.weight.data = conv.weight.data[idxs]
+    elif dim == 1:
+        new_conv.weight.data = conv.weight.data[:, idxs]
+
+    if conv.bias is not None:
+        new_conv.bias.data = conv.bias.data
+    return new_conv
+
+# 改进的剪枝流程
+def advanced_prune():
+    model = yolo.model
+    for name, m in model.named_modules():
+        if isinstance(m, Bottleneck):
+            prune_conv(m.cv1, m.cv2)
+        elif isinstance(m, (CALayer, PALayer)):
+            for conv in process_ca_pa(m):
+                prune_conv(conv, None)
+
+    backbone = model.model
+    for i in range(len(backbone)):
+        if isinstance(backbone[i], (C2f, SPPF)):
+            next_layers = []
+            j = i + 1
+            while j < len(backbone) and not isinstance(backbone[j], (Conv, C2f, SPPF)):
+                if isinstance(backbone[j], (CALayer, PALayer)):
+                    next_layers.extend(process_ca_pa(backbone[j]))
+                j += 1
+            if next_layers:
+                prune_conv(backbone[i].cv2, next_layers)
+
+    detect = model.model[-1]
+    for i, cv in enumerate(detect.cv2):
+        prune_conv(cv[0], cv[1])
+        prune_conv(cv[1], cv[2])
+
+    pruned_params = count_parameters(model)
+    print(f"剪枝后模型参数量: {pruned_params:,}")
+    print(f"参数量减少: {original_params - pruned_params:,} ({(1 - pruned_params / original_params) * 100:.2f}%)")
+
+    torch.save({
+        'model': deepcopy(model).half(),
+        'train_args': yolo.ckpt['train_args']
+    }, res_dir)
+
+advanced_prune()
+print("Pruning complete with CALayer/PALayer support!")
