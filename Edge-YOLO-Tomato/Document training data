@@ -1,0 +1,21 @@
+1.What task is this dataset used for?
+This dataset is mainly used for tomato object detection tasks, specifically including: ripeness detection, fruit size assessment (for thinning and harvesting decisions), and robustness testing under adverse weather conditions such as fog and rain. The design goal of the Edge-YOLO-Tomato model is to achieve high-precision, low-latency tomato detection on edge devices, suitable for practical deployment scenarios such as agricultural robots.
+2.How was the dataset collected?
+This dataset was captured under different times, lighting, weather conditions, and angles using the Sightway SC550XS sensor and the Sony IMX351 sensor in an regular tomato picking garden in Mangdun Town, Yanping District, Nanping City, Fujian Province, China (118.09763°E, 26.72318°N). The shooting distance ranged from 15 cm to 50 cm. It also includes publicly available data from TomatOD, Cherry Tomato, and Laboro Tomato. The resulting dataset includes tomatoes from multiple regions (China, Japan, Korea, and Europe), two main types (common tomato and cherry tomato), two ripeness stages (ripe and unripe), and a range of growing and weather conditions—including greenhouse and open-field environments, as well as cloudy, sunny, and rainy or foggy lighting.
+3.The detail of the dataset. 
+ (a) Image Distribution Across Environmental Conditions and Tomato Types; (b) Dataset Split in the TIDAW Dataset; (c) Geographic Distribution of Tomato Image Sources 
+
+
+4.Has the data been manually reviewed? Who are the annotators?
+The dataset underwent manual review to ensure annotation quality. All images were annotated by Yalu Cai. 
+5.What are the known limitations or ethical risks of the data?
+To ensure safety-critical deployment, we analyze performance heterogeneity across data subpopulations (As shown in Table 8). The TIDAW dataset exhibits significant biases (As shown in Figure 1): cherry tomatoes account for only 19.7% of instances, and non-Chinese images constitute just 15.82%. Correspondingly, the model shows reduced localization accuracy on these subsets—mAP50:95 drops to 0.786 for cherry tomatoes and 0.734 in non-Chinese environments, compared to 0.871 and 0.928 in their dominant counterparts. Similarly, under adverse weather (rain/fog), mAP50:95 falls to 0.752 despite high recall (mAP50 = 0.959), indicating unreliable bounding box predictions in visually degraded conditions. These gaps reveal that aggregate metrics can mask critical failure modes in minority or high-risk scenarios. Therefore, we recommend context-aware deployment policies: disabling autonomous execution for cherry tomatoes or overseas farms without local fine-tuning, and requiring human verification during adverse weather. Such measures align with safety-by-design principles for real-world agricultural robotics.
+
+Performance of Edge-YOLO-Tomato across diverse tomato Varieties, geographic regions, and weather conditions
+Datasets	mAP50	mAP50:95
+Regular tomato	0.995	0.871
+Cherry tomato	0.962	0.786
+China	0.989	0.928
+Other countries	0.949	0.734
+ Favorable weather	0.962	0.778
+Adverse weather	0.959	0.752
